@@ -1,68 +1,41 @@
-const express = require('express');
-const path = require('path');
-const moment = require('moment-timezone');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
+const path = require('path');
 
-const app = express();
-const port = process.env.PORT || 3000;
-const SAO_PAULO_TIMEZONE = 'America/Sao_Paulo';
+export default async function handler(req, res) {
+    const { email, horario_disparo_email, titulo_email } = req.query;
 
-// Configuração da Planilha via Variáveis de Ambiente
-const SPREADSHEET_ID = '1IW-eO3ZX-l1NQoU0edo8AKe0hcgjR8DXl_m-dY3y2fs';
+    // 1. Prioridade Total: Enviar a imagem imediatamente para o e-mail não travar
+    const imagePath = path.join(process.cwd(), 'public', 'img', 'pixel.png');
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.sendFile(imagePath);
 
-async function registrarAbertura(dados) {
+    // 2. Processamento em "segundo plano" para a planilha
     try {
-        const auth = new JWT({
-            email: 'googlesheetsintegration@bold-script-494715-p2.iam.gserviceaccount.com',
-            // A chave privada deve estar na variável de ambiente da Vercel
+        const serviceAccountAuth = new JWT({
+            email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+            // Correção crucial para o formato da chave na Vercel
             key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
 
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, auth);
+        const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID, serviceAccountAuth);
+        
+        // Carrega apenas o necessário para ganhar tempo
         await doc.loadInfo();
         const sheet = doc.sheetsByIndex[0];
 
-        // Adiciona a linha com os cabeçalhos exatos da sua imagem
         await sheet.addRow({
-            'Email': dados.email,
-            'Horário Disparo': dados.horario_disparo,
-            'Data Abertura': dados.data_abertura,
-            'Assunto': dados.assunto
+            'Email': email || 'N/A',
+            'Horário Disparo': horario_disparo_email || 'N/A',
+            'Data Abertura': new Date().toLocaleString('pt-BR', { timeZone: 'America/Porto_Velho' }),
+            'Assunto': titulo_email || 'Sem Assunto'
         });
-        console.log(`Planilha atualizada: ${dados.email}`);
-    } catch (err) {
-        console.error('Erro ao salvar no Sheets:', err.message);
+
+        console.log(`Planilha atualizada para: ${email}`);
+    } catch (error) {
+        // Loga o erro mas não interrompe a entrega da imagem
+        console.error('Erro ao salvar no Sheets:', error.message);
     }
 }
-
-app.get('/api/imagem', async (req, res) => {
-    const { email, horario_disparo_email, titulo_email } = req.query;
-
-    if (!email) {
-        return res.status(400).send('Parâmetro "email" é obrigatório.');
-    }
-
-    // Formata a data de abertura
-    const agora = moment().tz(SAO_PAULO_TIMEZONE).format('DD/MM/YYYY HH:mm:ss');
-
-    // Prepara os dados para a planilha
-    const dadosParaPlanilha = {
-        email: email,
-        horario_disparo: horario_disparo_email || 'Não informado',
-        data_abertura: agora,
-        assunto: titulo_email || 'Sem título'
-    };
-
-    // Executa em segundo plano para não travar o envio da imagem
-    registrarAbertura(dadosParaPlanilha);
-
-    // Envia o Pixel Fantasma
-    const imagePath = path.join(__dirname, 'img', 'pixelone.png');
-    res.sendFile(imagePath, (err) => {
-        if (err) res.status(500).send('Erro ao carregar imagem.');
-    });
-});
-
-app.listen(port, () => console.log(`Rodando na porta ${port}`));
