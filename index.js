@@ -1,28 +1,38 @@
+const express = require('express');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 const path = require('path');
+const fs = require('fs');
 
-export default async function handler(req, res) {
+const app = express();
+
+app.get('/api/imagem', async (req, res) => {
     const { email, horario_disparo_email, titulo_email } = req.query;
 
-    // 1. Prioridade Total: Enviar a imagem imediatamente para o e-mail não travar
+    // 1. Enviar a imagem imediatamente (estabilidade para o e-mail)
     const imagePath = path.join(process.cwd(), 'public', 'img', 'pixel.png');
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.sendFile(imagePath);
+    
+    if (fs.existsSync(imagePath)) {
+        const imageBuffer = fs.readFileSync(imagePath);
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.send(imageBuffer);
+    } else {
+        // Fallback: se a imagem sumir, envia um pixel transparente via código
+        const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+        res.setHeader('Content-Type', 'image/png');
+        res.send(pixel);
+    }
 
-    // 2. Processamento em "segundo plano" para a planilha
+    // 2. Gravar na Planilha em "segundo plano"
     try {
         const serviceAccountAuth = new JWT({
             email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            // Correção crucial para o formato da chave na Vercel
             key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
 
         const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID, serviceAccountAuth);
-        
-        // Carrega apenas o necessário para ganhar tempo
         await doc.loadInfo();
         const sheet = doc.sheetsByIndex[0];
 
@@ -33,9 +43,15 @@ export default async function handler(req, res) {
             'Assunto': titulo_email || 'Sem Assunto'
         });
 
-        console.log(`Planilha atualizada para: ${email}`);
+        console.log(`Sucesso: ${email}`);
     } catch (error) {
-        // Loga o erro mas não interrompe a entrega da imagem
-        console.error('Erro ao salvar no Sheets:', error.message);
+        console.error('Erro no Sheets:', error.message);
     }
-}
+});
+
+// Rota padrão para evitar o erro "Cannot GET /"
+app.get('/', (req, res) => {
+    res.send('Tracker de Email Ativo 🚀');
+});
+
+module.exports = app;
