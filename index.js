@@ -32,7 +32,8 @@ app.get('/api/imagem', async (req, res) => {
 
         console.log(`✅ Planilha atualizada: ${email}`);
     } catch (error) {
-        console.error('❌ Erro no Sheets:', error.message);
+        // Isso vai mostrar o erro detalhado nos logs do Vercel
+        console.error('❌ Erro completo:', error.response ? error.response.data : error);
     } finally {
         // Envia o pixel (imagem 1x1 transparente)
         const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
