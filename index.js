@@ -7,6 +7,25 @@ const app = express();
 // Rota para o pixel de rastreamento
 app.get('/api/imagem', async (req, res) => {
     const { email, horario_disparo_email, titulo_email } = req.query;
+    
+    // Pixel transparente 1x1 (PNG)
+    const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+
+    // --- LÓGICA ANTI-BOT / ANÁLISE RÁPIDA ---
+    const agora = Date.now(); // Timestamp atual (ms)
+    const momentoDisparo = Number(horario_disparo_email); // Espera um timestamp na URL
+    const diferencaSegundos = (agora - momentoDisparo) / 1000;
+
+    // Se o acesso for feito em menos de 30 segundos após o disparo, 
+    // apenas entregamos o pixel e encerramos a execução aqui (sem gravar no Sheets).
+    if (!isNaN(momentoDisparo) && diferencaSegundos < 30) {
+        console.log(`🤖 Bot detectado ou abertura muito rápida (${diferencaSegundos.toFixed(1)}s): ${email}`);
+        
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        return res.status(200).send(pixel);
+    }
+    // ----------------------------------------
 
     try {
         // Configuração da autenticação com Google
@@ -22,25 +41,31 @@ app.get('/api/imagem', async (req, res) => {
         await doc.loadInfo();
         const sheet = doc.sheetsByIndex[0];
 
+        // Formatamos o horário de disparo (vinda do timestamp) para algo legível na planilha
+        const disparoLegivel = !isNaN(momentoDisparo) 
+            ? new Date(momentoDisparo).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+            : 'N/A';
+
         // Adiciona a linha com os dados
         await sheet.addRow({
             'Email': email || 'N/A',
-            'Horário Disparo': horario_disparo_email || 'N/A',
+            'Horário Disparo': disparoLegivel,
             'Data Abertura': new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
             'Assunto': titulo_email || 'Sem Assunto'
         });
 
-        console.log(`✅ Planilha atualizada: ${email}`);
+        console.log(`✅ Abertura real registrada: ${email} (após ${diferencaSegundos.toFixed(1)}s)`);
+
     } catch (error) {
-        // Isso vai mostrar o erro detalhado nos logs do Vercel
-        console.error('❌ Erro completo:', error.response ? error.response.data : error);
+        // Log detalhado para depuração no painel da Vercel
+        console.error('❌ Erro no Sheets:', error.response ? error.response.data : error);
     } finally {
-        // Envia o pixel (imagem 1x1 transparente)
-        const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
-        
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.status(200).send(pixel);
+        // Garante que o pixel será enviado se o código chegar até aqui (fluxo normal ou erro)
+        if (!res.headersSent) {
+            res.setHeader('Content-Type', 'image/png');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.status(200).send(pixel);
+        }
     }
 });
 
