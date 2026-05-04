@@ -5,19 +5,33 @@ const { JWT } = require('google-auth-library');
 const app = express();
 
 app.get('/api/imagem', async (req, res) => {
-    // Adicionamos o 'link_clicado' nos parâmetros recebidos
-    const { email, horario_disparo_email, titulo_email, link_clicado } = req.query;
+    // Parâmetros reduzidos conforme sua solicitação
+    const { e, timeD, t, AK, AH, AD } = req.query;
     
+    let linkFinal = null;
+
+    // Lógica de montagem de Links
+    if (AK) {
+        // Kiwify: Base + Parâmetro enviado
+        linkFinal = `https://pay.kiwify.com.br/${AK}`;
+    } else if (AH) {
+        // Hotmart: Base + ID enviado
+        linkFinal = `https://go.hotmart.com/${AH}`;
+    } else if (AD) {
+        // Digistore24: Base enviada + seu ID fixo de afiliado
+        // Removemos uma possível barra no final para padronizar antes de anexar o ID
+        const baseUrl = AD.endsWith('/') ? AD.slice(0, -1) : AD;
+        linkFinal = `${baseUrl}#aff=leofirmo`;
+    }
+
     const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
     const agora = Date.now();
-    const momentoDisparo = Number(horario_disparo_email);
+    const momentoDisparo = Number(timeD);
     const diferencaSegundos = (agora - momentoDisparo) / 1000;
 
-    // --- LÓGICA ANTI-BOT PARA ABERTURAS (PIXEL) ---
-    // Só aplicamos a trava de 30s se NÃO for um clique no link. 
-    // Se a pessoa clicar no botão muito rápido, queremos registrar o interesse de compra.
-    if (!link_clicado && !isNaN(momentoDisparo) && diferencaSegundos < 30) {
-        console.log(`🤖 Bot detectado na abertura (${diferencaSegundos.toFixed(1)}s): ${email}`);
+    // Anti-bot apenas para abertura (quando não há link de redirecionamento)
+    if (!linkFinal && !isNaN(momentoDisparo) && diferencaSegundos < 30) {
+        console.log(`🤖 Bot detectado: ${e}`);
         res.setHeader('Content-Type', 'image/png');
         return res.status(200).send(pixel);
     }
@@ -37,40 +51,29 @@ app.get('/api/imagem', async (req, res) => {
             ? new Date(momentoDisparo).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
             : 'N/A';
 
-        // Adiciona a linha com a nova coluna 'Link clicado'
+        // Registro na planilha com a coluna 'Link clicado'
         await sheet.addRow({
-            'Email': email || 'N/A',
+            'Email': e || 'N/A',
             'Horário Disparo': disparoLegivel,
             'Data Abertura': new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
-            'Assunto': titulo_email || 'Sem Assunto',
-            'Link clicado': link_clicado || '' // Se for clique, preenche. Se for abertura, fica vazio.
+            'Assunto': t || 'Sem Assunto',
+            'Link clicado': linkFinal || '' 
         });
 
-        if (link_clicado) {
-            console.log(`💰 CLIQUE NO LINK: ${email} -> ${link_clicado}`);
-        } else {
-            console.log(`✅ Abertura real registrada: ${email}`);
-        }
-
     } catch (error) {
-        console.error('❌ Erro no Sheets:', error.response ? error.response.data : error);
+        console.error('❌ Erro no Sheets:', error.message);
     } finally {
-        // Se for um clique no link, redirecionamos o usuário
-        if (link_clicado) {
-            return res.redirect(link_clicado);
+        if (linkFinal) {
+            // Redireciona para o link de afiliado montado
+            return res.redirect(linkFinal);
         }
 
-        // Se for apenas o pixel de abertura, enviamos a imagem
         if (!res.headersSent) {
             res.setHeader('Content-Type', 'image/png');
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
             res.status(200).send(pixel);
         }
     }
-});
-
-app.get('/', (req, res) => {
-    res.send('Tracker Online 🚀');
 });
 
 module.exports = app;
